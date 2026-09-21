@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Census Tracts &amp; Grocery Stores Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/esri-leaflet@3/dist/esri-leaflet.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  #TractMap {
+    width: 100%;
+    height: 100vh;
+  }
+
+  /* Grocery store marker: rounded green badge with a cart glyph */
+  .gs-icon { background: none; border: none; }
+  .gs-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: var(--c, #2e7d32);
+    border: 1.5px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  }
+  .gs-badge:hover { transform: scale(1.15); }
+
+  /* Popup card */
+  .map-popup {
+    font: 13px/1.45 "Avenir Next", "Segoe UI", sans-serif;
+    color: #323232;
+  }
+  .map-popup h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    color: #00619b;
+  }
+  .map-popup h4 {
+    margin: 10px 0 4px;
+    font-size: 13px;
+    border-bottom: 2px solid #e0e0e0;
+    padding-bottom: 3px;
+  }
+  .map-popup .mp-block { margin: 6px 0; }
+  .map-popup .mp-loading { color: #888; font-style: italic; }
+  .map-popup table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+  }
+  .map-popup td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+  }
+  .map-popup td:first-child {
+    background: #f3f3f3;
+    font-weight: 600;
+    width: 42%;
+  }
+  .map-popup ul.mp-list {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+
+  /* Legend */
+  .map-legend {
+    background: rgba(255, 255, 255, .94);
+    border: 1px solid rgba(0, 0, 0, .2);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font: 12px/1.4 "Avenir Next", "Segoe UI", sans-serif;
+    color: #222;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
+    max-width: 250px;
+    max-height: 55vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .map-legend h5 {
+    margin: 6px 0 4px;
+    font-size: 11px;
+    letter-spacing: .03em;
+    color: #00619b;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 2px;
+  }
+  .map-legend h5:first-child { margin-top: 0; }
+  .map-legend .lg-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 3px 0;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 1px 2px;
+    margin-left: -2px;
+  }
+  .map-legend .lg-row:hover { background: rgba(0, 97, 155, .08); }
+  .map-legend .lg-label { flex: 1 1 auto; }
+  .map-legend .lg-count { color: #888; font-size: 11px; }
+  .map-legend .lg-caret {
+    color: #888;
+    font-size: 9px;
+    width: 8px;
+    text-align: center;
+    transition: transform .12s ease;
+  }
+  .map-legend .lg-item.open .lg-caret { transform: rotate(90deg); }
+  .map-legend .lg-empty { color: #888; font-style: italic; }
+  .map-legend .lg-sub {
+    display: none;
+    margin: 2px 0 6px 21px;
+    max-height: 168px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-left: 1px solid #e4e4e4;
+    padding-left: 6px;
+  }
+  .map-legend .lg-item.open .lg-sub { display: block; }
+  .map-legend .lg-hit {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    font: inherit;
+    color: #00619b;
+    cursor: pointer;
+    padding: 2px 3px;
+    border-radius: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .map-legend .lg-hit:hover { background: rgba(0, 97, 155, .12); text-decoration: underline; }
+  .map-legend .lg-more { color: #999; font-style: italic; padding: 2px 3px; font-size: 11px; }
+
+  /* Swatches shared by the legend and the search results */
+  .lg-sw {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+  }
+  .lg-sw svg { width: 9px; height: 9px; }
+  .lg-badge {
+    border-radius: 3px;
+    border: 1px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .3);
+  }
+
+  .lg-flash { animation: lgFlash 1.6s ease-out 1; }
+  @keyframes lgFlash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* Search widget */
+  .map-search {
+    background: rgba(255, 255, 255, .96);
+    border: 1px solid rgba(0, 0, 0, .2);
+    border-radius: 4px;
+    padding: 6px;
+    font: 12px/1.4 "Avenir Next", "Segoe UI", sans-serif;
+    color: #222;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
+    width: min(270px, calc(100vw - 20px));
+    box-sizing: border-box;
+  }
+  .map-search .ms-box { display: flex; align-items: center; gap: 6px; }
+  .map-search input.ms-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 1px solid rgba(0, 0, 0, .25);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font: inherit;
+    color: #222;
+    outline: none;
+    background: #fff;
+  }
+  .map-search input.ms-input:focus { border-color: #00619b; }
+  .map-search .ms-clear {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: #888;
+    font-size: 17px;
+    line-height: 1;
+    padding: 2px 5px;
+  }
+  .map-search .ms-clear:hover { color: #333; }
+  .map-search .ms-results {
+    display: none;
+    margin-top: 6px;
+    max-height: 55vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 1px solid #e0e0e0;
+    padding-top: 4px;
+  }
+  .map-search .ms-results.open { display: block; }
+  .map-search h6 {
+    margin: 6px 0 3px;
+    font-size: 10px;
+    letter-spacing: .03em;
+    color: #00619b;
+  }
+  .map-search h6:first-child { margin-top: 0; }
+  .map-search .ms-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    font: inherit;
+    color: #222;
+    cursor: pointer;
+    padding: 4px 3px;
+    border-radius: 3px;
+  }
+  .map-search .ms-row:hover { background: rgba(0, 97, 155, .08); }
+  .map-search .ms-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-search .ms-empty { color: #888; font-style: italic; padding: 4px 3px; }
+</style>
+</head>
+<body>
+<div id="TractMap"></div>
+
+<script>
+// ============================================================================
+// CENSUS TRACTS & GROCERY STORES MAP
+// ============================================================================
+// A simple two-layer map built from the Michigan schools template:
+//   - 2020 census tracts (polygons)
+//   - grocery stores (points)
+//   - popups: a tract shows its IDs, area, grocery stores inside it, and the
+//     nearest store to the clicked spot; a store shows its name and tract
+//   - a legend listing what is on screen
+//   - text search across store names and tract numbers
+// ============================================================================
+
+// ============================================================================
+// SETUP
+// ============================================================================
+// Opens on southeast Michigan (the extent of both services); the fitBounds call
+// further down tightens this once the tract extent comes back.
+const map = L.map('TractMap', { updateWhenZooming: false, updateWhenIdle: true })
+  .setView([42.45, -83.3], 9);
+L.esri.basemapLayer('Streets').addTo(map);
+
+// Both layers come from the same ArcGIS org (keep the trailing slash).
+const SERVICES = 'https://services3.arcgis.com/DwYBePxTPLzTYNGn/arcgis/rest/services/';
+const layer = (path, opts = {}) => L.esri.featureLayer({ url: SERVICES + path, ...opts });
+
+// Reads the first non-empty property matching any candidate name, ignoring case.
+const pick = (props, ...names) => {
+  if (!props) return null;
+  for (const n of names) {
+    const key = Object.keys(props).find(k => k.toLowerCase() === n.toLowerCase());
+    if (key != null && props[key] != null && String(props[key]).trim() !== '') return props[key];
+  }
+  return null;
+};
+
+const properCase = s => String(s ?? '').toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const MI = 1609.344;              // metres per mile
+const SQ_M_PER_SQ_MI = 2589988.11;
+const CLICK_TOLERANCE_PX = 10;
+const STORES_MIN_ZOOM = 10;       // grocery markers draw from this zoom in
+const NEAREST_RADIUS_MI = 25;     // search radius for "nearest grocery store"
+
+// Michigan county FIPS -> name, for the counties these services cover
+const COUNTY_FIPS = {
+  '087': 'Lapeer', '091': 'Lenawee', '093': 'Livingston', '099': 'Macomb',
+  '115': 'Monroe', '125': 'Oakland', '147': 'St. Clair', '161': 'Washtenaw', '163': 'Wayne'
+};
+
+// "512301" -> "5123.01", "512300" -> "5123"
+const formatTract = code => {
+  const c = String(code || '').trim();
+  if (!/^\d{6}$/.test(c)) return c;
+  const base = String(parseInt(c.slice(0, 4), 10));
+  const suf = c.slice(4);
+  return suf === '00' ? base : `${base}.${suf}`;
+};
+const tractName = p => {
+  const t = pick(p, 'tractce20', 'TRACTCE');
+  return t ? `Census Tract ${formatTract(t)}` : 'Census Tract';
+};
+const countyName = p => {
+  const fp = pick(p, 'countyfp20', 'COUNTYFP');
+  return fp ? (COUNTY_FIPS[fp] ? COUNTY_FIPS[fp] + ' County' : 'County FIPS ' + fp) : '';
+};
+const storeName = p => properCase(pick(p, 'name', 'NAME') || 'Grocery Store');
+
+// ============================================================================
+// SYMBOLOGY
+// ============================================================================
+const STORE_COLOR = '#2e7d32';
+const TRACT_FILL = '#4c81cd';     // matches the service's own renderer
+
+const CART_GLYPH = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <path d="M1 2h2.2l1.6 7.2h7.4L14 4H4.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="6" cy="12.6" r="1.4" fill="#fff"/><circle cx="11.2" cy="12.6" r="1.4" fill="#fff"/></svg>`;
+
+const storeIcon = L.divIcon({
+  className: 'gs-icon',
+  html: `<span class="gs-badge" style="--c:${STORE_COLOR}">${CART_GLYPH}</span>`,
+  iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -9]
+});
+
+const Swatch = {
+  fill:  c => `<i class="lg-sw" style="background:${c};border:1px solid #000"></i>`,
+  badge: (c, g) => `<i class="lg-sw lg-badge" style="background:${c}">${g}</i>`
+};
+
+// ============================================================================
+// LAYERS
+// ============================================================================
+const tracts = layer('2020_Census_Tracts/FeatureServer/0', {
+  simplifyFactor: 0.35,   // PERF: thin polygons on the wire
+  precision: 5,
+  interactive: false,     // clicks are answered by spatial query below
+  style: () => ({ color: '#1f3b63', weight: 0.75, opacity: 0.8, fillColor: TRACT_FILL, fillOpacity: 0.18 })
+}).addTo(map);
+
+const groceryStores = layer('Grocery_Stores/FeatureServer/0', {
+  precision: 6,
+  pointToLayer: (gj, latlng) => L.marker(latlng, {
+    icon: storeIcon, riseOnHover: true, title: storeName(gj.properties)
+  })
+});
+
+// Stores switch on once zoomed in far enough to be readable
+function updateLayers() {
+  const on = map.getZoom() >= STORES_MIN_ZOOM;
+  if (on && !map.hasLayer(groceryStores)) map.addLayer(groceryStores);
+  else if (!on && map.hasLayer(groceryStores)) map.removeLayer(groceryStores);
+}
+map.on('zoomend', updateLayers);
+updateLayers();
+
+tracts.query().bounds((err, bounds) => {
+  if (!err && bounds && bounds.isValid()) { map.fitBounds(bounds); updateLayers(); }
+});
+
+// ============================================================================
+// QUERY HELPERS
+// ============================================================================
+const queryTractAt = latlng => new Promise(resolve => {
+  tracts.query().intersects(latlng).returnGeometry(true)
+    .run((err, fc) => resolve(!err && fc && fc.features.length ? fc.features[0] : null));
+});
+
+const queryIntersectAll = (lyr, geom) => new Promise(resolve => {
+  lyr.query().intersects(geom).returnGeometry(false)
+    .run((err, fc) => resolve(!err && fc && fc.features ? fc.features.map(f => f.properties) : []));
+});
+
+// Nearest point feature within radiusMiles; distance measured client-side
+const queryNearest = (lyr, latlng, radiusMiles) => new Promise(resolve => {
+  lyr.query().nearby(latlng, radiusMiles * MI).run((err, fc) => {
+    if (err || !fc || !fc.features || !fc.features.length) return resolve(null);
+    let best = null, bestM = Infinity;
+    for (const f of fc.features) {
+      if (!f.geometry || f.geometry.type !== 'Point') continue;
+      const [lng, lat] = f.geometry.coordinates;
+      const ll = L.latLng(lat, lng);
+      const d = latlng.distanceTo(ll);
+      if (d < bestM) { bestM = d; best = { props: f.properties, latlng: ll }; }
+    }
+    resolve(best ? { ...best, miles: bestM / MI } : null);
+  });
+});
+
+function pixelsToMeters(px) {
+  const c = map.latLngToContainerPoint(map.getCenter());
+  return map.getCenter().distanceTo(map.containerPointToLatLng(L.point(c.x + px, c.y)));
+}
+
+// ============================================================================
+// POPUPS
+// ============================================================================
+const row = (label, value) => `<tr><td>${esc(label)}</td><td>${esc(value === 0 ? '0' : (value || '\u2014'))}</td></tr>`;
+const card = (title, body) => `<div class="map-popup"><h3>${esc(title)}</h3>${body}</div>`;
+const table = rows => `<table>${rows.join('')}</table>`;
+const setIfOpen = (popup, html) => { if (popup.isOpen()) popup.setContent(html); };
+
+function openPopup(latlng, options, loadingText, build, errorText) {
+  const popup = L.popup({ autoPanPadding: [30, 30], ...options })
+    .setLatLng(latlng)
+    .setContent(`<div class="map-popup mp-loading">${loadingText}\u2026</div>`)
+    .openOn(map);
+  Promise.resolve(build(popup)).catch(() => {
+    if (popup.isOpen()) popup.setContent(`<div class="map-popup">${errorText}</div>`);
+  });
+}
+
+const sqMi = m2 => (Number(m2) / SQ_M_PER_SQ_MI);
+const urbanRural = code => ({ U: 'Urban', R: 'Rural' }[String(code || '').toUpperCase()] || '');
+
+async function buildTractPopup(latlng, popup) {
+  const tract = await queryTractAt(latlng);
+  if (!tract) return setIfOpen(popup, '<div class="map-popup">No census tract found here.</div>');
+
+  const p = tract.properties;
+  const [storesInside, nearest] = await Promise.all([
+    queryIntersectAll(groceryStores, tract.geometry),
+    queryNearest(groceryStores, latlng, NEAREST_RADIUS_MI)
+  ]);
+
+  const land = pick(p, 'aland20', 'ALAND');
+  const water = pick(p, 'awater20', 'AWATER');
+  const landSqMi = land != null ? sqMi(land) : null;
+  const names = [...new Set(storesInside.map(storeName))].sort((a, b) => a.localeCompare(b));
+  const density = landSqMi ? (storesInside.length / landSqMi).toFixed(2) : null;
+
+  setIfOpen(popup, card(tractName(p), `
+    ${table([
+      row('GEOID', pick(p, 'geoid20', 'GEOID')),
+      row('County', countyName(p)),
+      urbanRural(pick(p, 'ur20')) ? row('Urban / Rural', urbanRural(pick(p, 'ur20'))) : '',
+      row('Land Area', landSqMi != null ? landSqMi.toFixed(2) + ' sq mi' : ''),
+      row('Water Area', water != null ? sqMi(water).toFixed(2) + ' sq mi' : '')
+    ])}
+
+    <h4>Grocery Access</h4>
+    ${table([
+      row('Stores in Tract', storesInside.length),
+      density != null ? row('Stores per sq mi', density) : '',
+      row('Nearest Store to Click', nearest
+        ? `${storeName(nearest.props)} (${nearest.miles.toFixed(2)} mi)`
+        : `None within ${NEAREST_RADIUS_MI} mi`)
+    ])}
+    ${names.length ? `<ul class="mp-list">${names.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}`));
+}
+
+async function buildStorePopup(latlng, props, popup) {
+  const tract = await queryTractAt(latlng);
+  const tp = tract ? tract.properties : null;
+  setIfOpen(popup, card(storeName(props), table([
+    row('Name', storeName(props)),
+    row('Type', 'Grocery Store'),
+    row('Census Tract', tp ? formatTract(pick(tp, 'tractce20')) : 'Outside mapped tracts'),
+    row('County', tp ? countyName(tp) : ''),
+    row('Coordinates', latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5))
+  ])));
+}
+
+// ============================================================================
+// CLICK HANDLER - store marker first, else the tract underneath
+// ============================================================================
+map.on('click', async e => {
+  const latlng = e.latlng;
+  if (map.getZoom() >= STORES_MIN_ZOOM) {
+    const hit = await queryNearest(groceryStores, latlng, pixelsToMeters(CLICK_TOLERANCE_PX + 4) / MI)
+      .catch(() => null);
+    if (hit) {
+      return openPopup(hit.latlng, { maxWidth: 320 }, 'Loading store details',
+        popup => buildStorePopup(hit.latlng, hit.props, popup),
+        'Could not load store details. Try again.');
+    }
+  }
+  openPopup(latlng, { maxWidth: 340, maxHeight: 440 }, 'Loading census tract',
+    popup => buildTractPopup(latlng, popup),
+    'Could not load census tract details. Try again.');
+});
+
+// ============================================================================
+// DYNAMIC LEGEND
+// ============================================================================
+// Lists only features in the current extent. Each row expands to show them, and
+// clicking one zooms there and opens its popup.
+(function initLegend() {
+  const MAX_LIST = 250;
+  const ZOOM_TO_POINT = 16;
+
+  function collect(lyr, nameFn) {
+    if (!lyr || !map.hasLayer(lyr)) return [];
+    const b = map.getBounds(), out = [];
+    try {
+      lyr.eachFeature(f => {
+        const props = f.feature ? f.feature.properties : null;
+        let latlng = null, bounds = null;
+        if (f.getLatLng) { latlng = f.getLatLng(); if (!b.contains(latlng)) return; }
+        else if (f.getBounds) { bounds = f.getBounds(); if (!b.intersects(bounds)) return; latlng = bounds.getCenter(); }
+        else return;
+        out.push({ name: nameFn(props) || 'Unnamed', latlng, bounds });
+      });
+    } catch (e) { /* layer still loading */ }
+    const seen = new Set();
+    return out.filter(e => {
+      const k = e.name + '|' + e.latlng.lat.toFixed(4) + ',' + e.latlng.lng.toFixed(4);
+      return seen.has(k) ? false : (seen.add(k), true);
+    }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  }
+
+  const ITEMS = [
+    { key: 'gs', group: 'Points', label: 'Grocery store',
+      swatch: () => Swatch.badge(STORE_COLOR, CART_GLYPH), list: () => collect(groceryStores, storeName) },
+    { key: 'ct', group: 'Boundaries', label: '2020 census tract',
+      swatch: () => Swatch.fill('rgba(76,129,205,.35)'), list: () => collect(tracts, tractName) }
+  ];
+
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = function () {
+    this._div = L.DomUtil.create('div', 'map-legend');
+    L.DomEvent.disableClickPropagation(this._div);
+    L.DomEvent.disableScrollPropagation(this._div);
+    return this._div;
+  };
+  legend.addTo(map);
+
+  const openKeys = new Set(), entries = {};
+
+  function render() {
+    const el = legend._div;
+    let lastGroup = null;
+    const html = ITEMS.map(it => {
+      const list = entries[it.key] = it.list();
+      if (!list.length) return '';
+      const shown = list.slice(0, MAX_LIST);
+      const head = it.group !== lastGroup ? `<h5>${it.group}</h5>` : '';
+      lastGroup = it.group;
+      return `${head}<div class="lg-item${openKeys.has(it.key) ? ' open' : ''}">
+          <div class="lg-row" data-toggle="${it.key}">
+            ${it.swatch()}<span class="lg-label">${it.label}</span>
+            <span class="lg-count">${list.length}</span><span class="lg-caret">&#9654;</span>
+          </div>
+          <div class="lg-sub">${shown.map((e, i) =>
+            `<button type="button" class="lg-hit" data-key="${it.key}" data-i="${i}" title="${esc(e.name)}">${esc(e.name)}</button>`).join('')}
+            ${list.length > shown.length ? `<div class="lg-more">+ ${list.length - shown.length} more, zoom in to list</div>` : ''}
+          </div></div>`;
+    }).join('');
+    el.innerHTML = html || '<div class="lg-empty">Zoom in to see map features</div>';
+  }
+
+  legend._div.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const t = ev.target.closest('[data-toggle]');
+    if (t) {
+      const key = t.getAttribute('data-toggle');
+      openKeys.has(key) ? openKeys.delete(key) : openKeys.add(key);
+      t.parentElement.classList.toggle('open');
+      return;
+    }
+    const hit = ev.target.closest('.lg-hit');
+    const entry = hit && (entries[hit.dataset.key] || [])[Number(hit.dataset.i)];
+    if (entry) zoomTo(entry);
+  });
+
+  let flash = null;
+  function zoomTo(entry) {
+    if (entry.bounds) map.fitBounds(entry.bounds, { padding: [30, 30], animate: false });
+    else map.setView(entry.latlng, Math.max(map.getZoom(), ZOOM_TO_POINT), { animate: false });
+    if (flash) map.removeLayer(flash);
+    flash = L.circleMarker(entry.latlng, {
+      radius: 16, color: '#00619b', weight: 3, fillColor: '#00619b', fillOpacity: .12,
+      interactive: false, className: 'lg-flash'
+    }).addTo(map);
+    setTimeout(() => { if (flash) { map.removeLayer(flash); flash = null; } }, 1600);
+    // let the store layer switch on before the click handler queries it
+    setTimeout(() => map.fire('click', { latlng: entry.latlng }), 250);
+  }
+
+  let pending = null;
+  const schedule = () => { clearTimeout(pending); pending = setTimeout(render, 200); };
+  map.on('moveend zoomend layeradd layerremove', schedule);
+  [tracts, groceryStores].forEach(l => l.on('load', schedule));
+  render();
+})();
+
+// ============================================================================
+// SEARCH WIDGET
+// ============================================================================
+// Searches store names and tract numbers / GEOIDs on the server, zooms to the
+// chosen result and opens its popup.
+(function initSearch() {
+  const MIN_CHARS = 2, DEBOUNCE_MS = 350, LIMIT = 8;
+
+  const runWhere = (lyr, where) => new Promise(resolve => {
+    lyr.query().where(where).limit(LIMIT).returnGeometry(true)
+      .run((err, fc) => resolve(err ? [] : (fc && fc.features) || []));
+  });
+  const like = (fields, term) => {
+    const t = term.replace(/'/g, "''").toUpperCase();
+    return fields.map(f => `UPPER(${f}) LIKE '%${t}%'`).join(' OR ');
+  };
+
+  // Tract numbers are stored as 6-digit codes ("512301"), so "5123.01" or
+  // "5123" is converted to that form before searching.
+  function tractWhere(term) {
+    const m = term.replace(/^census\s*tract\s*/i, '').trim().match(/^(\d{1,4})(?:\.(\d{1,2}))?$/);
+    const clauses = [like(['geoid20'], term)];
+    if (m) {
+      const code = m[1].padStart(4, '0') + (m[2] ? m[2].padEnd(2, '0') : '');
+      clauses.push(m[2] ? `tractce20 = '${code}'` : `tractce20 LIKE '${code}%'`);
+    }
+    return clauses.join(' OR ');
+  }
+
+  // Interior anchor for a polygon result: area centroid if it falls inside,
+  // otherwise the midpoint of the widest horizontal scanline.
+  function pointOnSurface(g) {
+    const parts = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+    if (!parts.length) return null;
+    const area = r => r.reduce((a, [x1, y1], i) => { const [x2, y2] = r[(i + 1) % r.length]; return a + x1 * y2 - x2 * y1; }, 0) / 2;
+    const rings = parts.reduce((b, p) => Math.abs(area(p[0])) > Math.abs(area(b[0])) ? p : b);
+    const outer = rings[0];
+    const inRing = ([px, py], r) => {
+      let inside = false;
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const [xi, yi] = r[i], [xj, yj] = r[j];
+        if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    const inside = pt => inRing(pt, outer) && !rings.slice(1).some(h => inRing(pt, h));
+    let cx = 0, cy = 0, a2 = 0;
+    outer.forEach(([x1, y1], i) => {
+      const [x2, y2] = outer[(i + 1) % outer.length], c = x1 * y2 - x2 * y1;
+      a2 += c; cx += (x1 + x2) * c; cy += (y1 + y2) * c;
+    });
+    if (a2) { cx /= 3 * a2; cy /= 3 * a2; if (inside([cx, cy])) return L.latLng(cy, cx); }
+    const ys = outer.map(p => p[1]), minY = Math.min(...ys), maxY = Math.max(...ys);
+    let best = null, bestLen = -1;
+    for (let s = 1; s < 40; s++) {
+      const y = minY + (maxY - minY) * s / 40, xs = [];
+      rings.forEach(r => { for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const [x1, y1] = r[j], [x2, y2] = r[i];
+        if ((y1 > y) !== (y2 > y)) xs.push(x1 + (y - y1) * (x2 - x1) / (y2 - y1));
+      }});
+      xs.sort((a, b) => a - b);
+      for (let i = 0; i + 1 < xs.length; i += 2)
+        if (xs[i + 1] - xs[i] > bestLen) { bestLen = xs[i + 1] - xs[i]; best = L.latLng(y, (xs[i] + xs[i + 1]) / 2); }
+    }
+    return best || L.latLng(outer[0][1], outer[0][0]);
+  }
+
+  function featureGeom(f) {
+    const g = f && f.geometry;
+    if (!g) return null;
+    if (g.type === 'Point') return { latlng: L.latLng(g.coordinates[1], g.coordinates[0]), bounds: null };
+    const b = L.geoJSON(f).getBounds();
+    return b.isValid() ? { latlng: pointOnSurface(g) || b.getCenter(), bounds: b } : null;
+  }
+
+  const SOURCES = [
+    { label: 'Grocery Stores', layer: groceryStores, where: t => like(['name'], t),
+      nameOf: storeName, swatch: () => Swatch.badge(STORE_COLOR, CART_GLYPH),
+      popup: (e, popup) => buildStorePopup(e.latlng, e.properties, popup) },
+    { label: 'Census Tracts', layer: tracts, where: tractWhere,
+      nameOf: p => `${tractName(p)}${countyName(p) ? ', ' + countyName(p) : ''}`,
+      swatch: () => Swatch.fill('rgba(76,129,205,.35)'),
+      popup: (e, popup) => buildTractPopup(e.latlng, popup) }
+  ];
+
+  let gen = 0, current = [], currentTerm = '';
+  let inputEl, clearEl, resultsEl;
+
+  async function runSearch(term) {
+    const my = ++gen;
+    resultsEl.innerHTML = '<div class="ms-empty">Searching\u2026</div>';
+    resultsEl.classList.add('open');
+    const groups = await Promise.all(SOURCES.map(async src => {
+      const feats = await runWhere(src.layer, src.where(term));
+      const seen = new Set(), entries = [];
+      for (const f of feats) {
+        const geom = featureGeom(f);
+        if (!geom) continue;
+        const name = src.nameOf(f.properties);
+        const key = name + '|' + geom.latlng.lat.toFixed(3) + ',' + geom.latlng.lng.toFixed(3);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push({ name, properties: f.properties, ...geom, src });
+      }
+      return entries.length ? { label: src.label, entries } : null;
+    }));
+    if (my !== gen) return;
+    render(term, groups.filter(Boolean));
+  }
+
+  function render(term, groups) {
+    currentTerm = term;
+    current = [];
+    if (!term) { resultsEl.innerHTML = ''; resultsEl.classList.remove('open'); return; }
+    resultsEl.classList.add('open');
+    if (!groups.length) { resultsEl.innerHTML = `<div class="ms-empty">No matches for "${esc(term)}"</div>`; return; }
+    resultsEl.innerHTML = groups.map(g => `<h6>${esc(g.label)}</h6>` + g.entries.map(e => {
+      current.push(e);
+      return `<button type="button" class="ms-row" data-i="${current.length - 1}">${e.src.swatch()}<span class="ms-name">${esc(e.name)}</span></button>`;
+    }).join('')).join('');
+  }
+
+  function goTo(entry) {
+    if (entry.bounds) map.fitBounds(entry.bounds, { padding: [40, 40], animate: false });
+    else map.setView(entry.latlng, Math.max(map.getZoom(), 15), { animate: false });
+    openPopup(entry.latlng, { maxWidth: 340, maxHeight: 440 }, 'Loading details',
+      popup => entry.src.popup(entry, popup), 'Could not load details. Try again.');
+  }
+
+  const control = L.control({ position: 'topright' });
+  control.onAdd = function () {
+    const div = L.DomUtil.create('div', 'map-search');
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    div.innerHTML = `
+      <div class="ms-box">
+        <input type="text" class="ms-input" placeholder="Search stores or tract numbers\u2026" aria-label="Search map features" />
+        <button type="button" class="ms-clear" hidden aria-label="Clear search">&times;</button>
+      </div>
+      <div class="ms-results"></div>`;
+    inputEl = div.querySelector('.ms-input');
+    clearEl = div.querySelector('.ms-clear');
+    resultsEl = div.querySelector('.ms-results');
+
+    let timer = null;
+    const reset = () => { inputEl.value = ''; clearEl.hidden = true; render('', []); };
+    inputEl.addEventListener('input', () => {
+      const term = inputEl.value.trim();
+      clearEl.hidden = !term;
+      clearTimeout(timer);
+      if (term.length < MIN_CHARS) return render('', []);
+      timer = setTimeout(() => runSearch(term), DEBOUNCE_MS);
+    });
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { reset(); inputEl.blur(); }
+      else if (e.key === 'Enter') {
+        const term = inputEl.value.trim();
+        if (!term) return;
+        clearTimeout(timer);
+        const go = () => { if (current[0]) { const c = current[0]; render('', []); goTo(c); } };
+        term === currentTerm ? go() : runSearch(term).then(go);
+        inputEl.blur();
+      }
+    });
+    clearEl.addEventListener('click', () => { reset(); inputEl.focus(); });
+    resultsEl.addEventListener('click', e => {
+      e.stopPropagation();   // before render() detaches the button
+      const btn = e.target.closest('.ms-row');
+      const entry = btn && current[Number(btn.dataset.i)];
+      if (!entry) return;
+      inputEl.value = entry.name;
+      clearEl.hidden = false;
+      render('', []);
+      goTo(entry);
+    });
+    return div;
+  };
+  control.addTo(map);
+})();
+</script>
+</body>
+</html>
